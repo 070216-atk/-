@@ -1,0 +1,12 @@
+{
+  "name": "express-anomaly-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "快递异常处理系统 - 零依赖后端 (Node 内置 http)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  }
+}

@@ -1,0 +1,36 @@
+sequenceDiagram
+    autonumber
+    actor U as 使用者
+    participant BAT as 启动系统.bat
+    participant N as Node 进程 :4000
+    participant E as Edge 应用窗口
+    participant W as web/ 静态文件
+    participant A as server/src/auth.js
+    participant D as server/data/users.db
+
+    Note over U,D: 前端与后端是同一个进程，没有独立的前端服务
+    U->>BAT: 双击
+    BAT->>BAT: L16 where node，失败则 L22 回退 Qoder Electron
+    BAT->>BAT: L50 探测 :4000 是否已被占用，已占用则直接开页面
+    BAT->>N: L57 start /min "node server\src\index.js"
+    N->>N: index.js:23 PORT=4000 · L176 listen
+    loop L59-66 每 2 秒一次，最多 4 次(约 8 秒)
+        BAT->>N: Test-NetConnection 127.0.0.1:4000
+    end
+    BAT->>E: L93 msedge --app=http://localhost:4000/ --user-data-dir=.webapp-profile
+    E->>N: GET /
+    N->>W: index.js:93 非 /api/* → serveStatic 读 web/index.html
+    W-->>E: vendor/react.js + babel.min.js + app.jsx
+    E->>E: 浏览器内 Babel 编译 app.jsx(无构建步骤)
+
+    Note over E,D: 登录链路——口令只以 scrypt 哈希形态离开数据库
+    U->>E: 输入 admin / admin123
+    E->>N: POST /api/login（app.jsx:5 BASE='/api' 同源相对路径）
+    N->>A: index.js:106 verifyCredentials
+    A->>D: SELECT username=? （node:sqlite，懒建库）
+    D-->>A: password_hash + salt
+    A->>A: scryptSync(输入口令, salt, 32) + timingSafeEqual
+    A-->>N: publicUser / null
+    N-->>E: 200 {token, user}　token 为 HMAC-SHA256 签名，TTL 8h
+    E->>E: localStorage 存 ex_token / ex_user
+    Note over BAT,D: 停止：双击 停止系统.bat → netstat 找 :4000 的 PID → taskkill /f<br/>数据文件不会被删，users.db 与 tickets.json 原地保留

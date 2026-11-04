@@ -1,0 +1,72 @@
+// ============================================================
+// kuaidi 快递异常处理系统 — 启动 / 运行时拓扑
+// 视图要回答的问题：双击之后到底起了几个进程、各占哪个端口、数据落在哪两个库里？
+// 生成方式：architecture-visualization:deployment-topology-analyzer + graphviz
+// 证据索引：同目录 startup-topology.evidence.md（每个节点标注 file:line）
+// 置信度：全部节点均有 code/config 直接证据 + 本机实测，无推断节点
+// ============================================================
+digraph startup_topology {
+  rankdir=TB;
+  fontname="Microsoft YaHei";
+  label="kuaidi 启动拓扑：1 个应用进程(:4000) + 1 个可选数据库进程(:8082)，两个库互不相干\n[evidence: 启动系统.bat / 打开数据库.bat / server/src/*.js]";
+  labelloc=t;
+  nodesep=0.45;
+  ranksep=0.55;
+
+  node [fontname="Microsoft YaHei", shape=box, style="rounded,filled", fillcolor="#FFF8E7", color="#8A6D3B", fontsize=11];
+  edge [fontname="Microsoft YaHei", fontsize=10];
+
+  operator [shape=ellipse, fillcolor="#E8F0FE", color="#1A73E8", label="使用者\n(双击 .bat 文件)"];
+
+  subgraph cluster_app {
+    fontname="Microsoft YaHei";
+    label="① 应用侧 · 零依赖免安装 · localhost:4000";
+    style="rounded,dashed";
+    color="#1A73E8";
+
+    startbat [label="启动系统.bat\nL16 优先系统 node\nL22 回退 Qoder Electron(RUN_AS_NODE)"];
+    backend  [shape=box3d, fillcolor="#E8F0FE", color="#1A73E8", label="node server\\src\\index.js\n进程 · 监听 :4000"];
+    browser  [shape=box3d, fillcolor="#E8F0FE", color="#1A73E8", label="msedge/chrome --app\n独立窗口, profile=.webapp-profile"];
+    webroot  [label="web/ 静态文件 (前端)\nindex.html → vendor/react.js + babel.min.js\n→ app.jsx 浏览器内编译，无构建步骤"];
+    routing  [label="index.js 请求分派\n非 /api/* → serveStatic\n/api/* → 业务处理 + Bearer 鉴权"];
+    authjs   [label="server/src/auth.js\nscrypt(口令, 16B 随机盐)\nHMAC-SHA256 token · TTL 8h"];
+    storejs  [label="server/src/store.js\n工单领域常量 + 状态机流转"];
+    usersdb  [shape=cylinder, fillcolor="#E6F4EA", color="#188038", label="server/data/users.db\nSQLite · node:sqlite\nusers(password_hash, salt, ...)"];
+    ticketsf [shape=cylinder, fillcolor="#FCE8E6", color="#D93025", label="server/data/tickets.json\nJSON 文件存储"];
+    secretf  [shape=cylinder, fillcolor="#FCE8E6", color="#D93025", label="server/data/.secret\nHMAC 签名密钥"];
+    stopbat  [label="停止系统.bat\nnetstat 找 :4000 的 PID → taskkill /f"];
+  }
+
+  subgraph cluster_teach {
+    fontname="Microsoft YaHei";
+    label="② 教学演示侧 · 无代码关联 · localhost:8082";
+    style="rounded,dashed";
+    color="#9334E6";
+
+    dbbat [label="快递数据库/打开数据库.bat\nL16 java -jar h2.jar"];
+    h2srv [shape=box3d, fillcolor="#F3E8FD", color="#9334E6", label="H2 Server (Java 17)\n网页控制台 :8082"];
+    h2db  [shape=cylinder, fillcolor="#F3E8FD", color="#9334E6", label="快递数据库/express.mv.db\nusers / sessions / tickets / parcels\n※ users.password_hash = 文本'占位哈希'"];
+  }
+
+  operator -> startbat [label="要用的时候"];
+  operator -> dbbat    [label="想查 SQL 的时候"];
+  operator -> stopbat  [label="收工"];
+
+  startbat -> backend [label="start /min  端口空闲才拉起"];
+  startbat -> browser [label="探到 :4000 就绪(最多 8s)后拉起"];
+  browser -> backend  [label="HTTP GET / 与 /api/*（同源相对路径）"];
+  backend -> routing;
+  routing -> webroot  [label="读文件返回 HTML/JS/CSS"];
+  routing -> authjs   [label="POST /api/login · /api/register"];
+  routing -> storejs  [label="工单 CRUD 与流转"];
+  authjs -> usersdb   [label="SELECT / INSERT / UPDATE 账号"];
+  authjs -> secretf   [label="首启生成，之后每次签 token"];
+  storejs -> ticketsf [label="整文件读写"];
+  stopbat -> backend  [label="强杀进程", style=dashed];
+
+  dbbat -> h2srv;
+  h2srv -> h2db [label="jdbc:h2:file: 独占锁 · user=sa 空密码"];
+
+  // 这条虚线是本项目最重要的架构结论，不是可选项
+  backend -> h2db [label="Node 无 H2 驱动，跨 Java 生态不可达\n→ 应用侧只能自带 SQLite", style=dotted, color="#D93025", fontcolor="#D93025", constraint=false];
+}
